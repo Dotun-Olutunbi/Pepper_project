@@ -1,7 +1,5 @@
 #! python3.7
 
-import argparse
-import os
 import numpy as np
 import speech_recognition as sr
 import whisper
@@ -17,7 +15,7 @@ from sys import platform
 
 class Transcriber:
     def __init__(self, model="small", non_english=False, energy_threshold=1000,
-                 record_timeout=2, phrase_timeout=3, default_microphone='HDA Intel PCH: ALC3266 Analog (hw:0,0)'):
+                 record_timeout=2, phrase_timeout=5, default_microphone='Built-in Microphone'):#HDA Intel PCH: ALC3266 Analog (hw:0,0)'):
         self.non_english = non_english
         self.model= model
         self.energy_threshold = energy_threshold
@@ -27,6 +25,7 @@ class Transcriber:
         self.source = None
         self.transcription = []
         self.transcription_history = []
+        self.silence_threshold = 8
 
         if 'linux' in platform:
             mic_name = default_microphone
@@ -41,7 +40,7 @@ class Transcriber:
                         self.source = sr.Microphone(sample_rate=16000)#, device_index=index)
                         break
         else:
-            self.source = sr.Microphone(sample_rate=16000, device_index=index)
+            self.source = sr.Microphone(sample_rate=16000)#, device_index=index)
 
         # Load Whisper model
         if model in ["tiny", "base", "small", "medium", "large"]:# and not non_english:
@@ -63,8 +62,6 @@ class Transcriber:
         self.empty_text_count = 0
         self.phrase_time = None
         self.phrase_bytes = bytes()
-        # self.transcription = []
-        self.empty_text_count = 0
 
         with self.source:
             self.recorder.adjust_for_ambient_noise(self.source)
@@ -86,6 +83,9 @@ class Transcriber:
         print("Transcriber initialised and Model loaded. Ready.\n", flush=True)
         
         # pass
+        self.leading_empty_count = 0
+        self.post_speech_empty_count = 0
+        self.speech_started = False
 
     def get_transcription(self):
         """
@@ -105,46 +105,80 @@ class Transcriber:
                     # Transcribe current phrase so far (optional, for live feedback)
                     audio_np = np.frombuffer(self.phrase_bytes, dtype=np.int16).astype(np.float32) / 32768.0
                     result = self.audio_model.transcribe(audio_np, fp16=torch.cuda.is_available())
-                    text = result['text'].strip()
-
-                    if text == '':
-                        self.empty_text_count += 1
-                    else:
-                        self.empty_text_count = 0
-                    # print("Empty text count is - ", self.empty_text_count)
-                    if self.transcription:
-                        self.transcription[-1] = text
-                    else:
-                        self.transcription.append(text)
-                    # print(f"New text is - {text} and transcription is now: ({self.transcription})")
+                    self.text = result['text'].strip()
                     
-                        self.transcription[-1] = text
-                    # print(f"Phrase incomplete, new text is - {text} and transcription is now: ({transcription})")
+                    if not self.speech_started:
+                        if self.text == '':
+                            self.leading_empty_count += 1
+                        else:
+                            self.speech_started = True
+                            self.empty_text_count = 0
+                        # print("Empty text count is - ", self.empty_text_count)
+                    else:
+                        if self.text == '':
+                            self.post_speech_empty_count += 1
+                        else:
+                            self.post_speech_empty_count = 0
+                    if self.transcription:
+                        self.transcription[-1] = self.text
+                    else:
+                        self.transcription.append(self.text)
+                        # print(f"New text is - {text} and transcription is now: ({self.transcription})")
+                        
+                        # print(f"Phrase incomplete, new text is - {text} and transcription is now: ({transcription})")
 
                 # Check for phrase completion based on time since last audio
-                if self.phrase_time and (datetime.utcnow() - self.phrase_time > timedelta(seconds=self.phrase_timeout)) or self.empty_text_count >= 3:
+                #if self.speech_started and (
+                    #(self.phrase_time and (datetime.utcnow() - self.phrase_time > timedelta(seconds=self.phrase_timeout))) or self.post_speech_empty_count >= self.silence_threshold):
+                if self.speech_started and self.post_speech_empty_count >= self.silence_threshold:
+                    print(f"post speech empty count is {self.post_speech_empty_count}, stopping transcription.")
+                    break
                     # Complete the phrase
-                    if self.phrase_bytes:
-                        audio_np = np.frombuffer(self.phrase_bytes, dtype=np.int16).astype(np.float32) / 32768.0
-                        result = self.audio_model.transcribe(audio_np, fp16=torch.cuda.is_available())
-                        text = result['text'].strip()
-                        self.transcription.append(text)
-                        # print(f"Phrase complete, new text is - {text} and transcription is now: ({self.transcription})")
+
+                if self.speech_started and self.phrase_time is not None:
+                    # Check if the phrase has been idle for too long
+                    if datetime.utcnow() - self.phrase_time > timedelta(seconds=self.phrase_timeout):
+                        print(f"datetime.utcnow() - self.phrase_time is {datetime.utcnow() - self.phrase_time}, phrase timeout reached.")
+                        print(f"phrase timeout is {self.phrase_timeout} seconds.")
+                        print("Phrase timeout reached, pausing transcription.")
+                        #print("Full transcription: ")
+                        break
                         self.phrase_bytes = bytes()
-                        # return text  # Return the last transcription
-                    #No worries.
-                        self.transcription_history  += self.transcription                  
-                        return ''.join(self.transcription)  # Return the full transcription
-                    self.phrase_time = None
-                    self.empty_text_count = 0  # Reset empty text count
+
+                if not self.speech_started and self.leading_empty_count > 10:
+                    #That is, waiting for a long time without speech, reset
+                    print(f"leading empty count is {self.leading_empty_count}, resetting transcription.")
+                    print("No speech detected for a while, reseting transcription")
+                    self.leading_empty_count = 0
 
                 sleep(0.25)  # Avoid busy waiting
 
             except KeyboardInterrupt:
-                print("\n\nTranscription:")
+                print("\n\nKeyboard Interrupt detected. Final Transcription:")
                 for line in self.transcription:
                     print(line)
                 break
-
-            sleep(0.25)  # Avoid busy waiting
         
+    
+        if self.phrase_bytes:
+            audio_np = np.frombuffer(self.phrase_bytes, dtype=np.int16).astype(np.float32) / 32768.0
+            result = self.audio_model.transcribe(audio_np, fp16=torch.cuda.is_available())
+            self.text = result['text'].strip()
+            #Only append if text is not a repeat of the last phrase
+            if not self.transcription or self.text != self.transcription[-1] or self.text == '':
+                self.transcription.append(self.text)
+            # print(f"Phrase complete, new text is - {text} and transcription is now: ({self.transcription})")
+            self.phrase_bytes = bytes()
+        ##phrase_time = None
+        post_speech_empty_count = 0
+        # check for silence
+        self.joined_text = ''.join(t for t in self.transcription if t.strip() != '')
+        # For debugging purposes only, I can print the joined text 
+        # print(f"Joined text is : {self.joined_text}")
+        # print("\nSilence detected. Final transcription. \n")
+        # print("Full transcription: ")
+        for line in self.transcription:
+            print(line)
+        return ' '.join(self.transcription).strip()  # Return the full transcription
+        
+            

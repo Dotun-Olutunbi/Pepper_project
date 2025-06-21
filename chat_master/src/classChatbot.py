@@ -54,7 +54,7 @@ class Chatbot:
             self.id_token,
             self.product_id,
             user_input):
-            print(chunk, end='', flush=True)
+            # print(chunk, end='', flush=True)
             response += chunk
         print() # For a new line after each chunk
         return response.strip()
@@ -70,7 +70,7 @@ class Chatbot:
                 if not user_input.strip():
                     print("Please say something meaningful.")
                     continue
-                print(f"AI: ", end='', flush=True)
+                print(f"AI 2: ", end='', flush=True)
                 # Get response from the EmoEx AI
                 response = self.get_response(user_input)
 
