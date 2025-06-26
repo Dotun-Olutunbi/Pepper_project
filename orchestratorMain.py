@@ -25,7 +25,7 @@ from chat_master.src.classChatbot import Chatbot
 def main():
     user_transcriptions = []
     conversation_history = []
-    max_wait_time = 5  # seconds to wait for user voice input
+    max_wait_time = 15  # seconds to wait for user voice input
     wait_start_time = None
     prompted = False
 
@@ -54,7 +54,6 @@ def main():
 
         transcriber_start_time = time.time() #To calculate transcription time lag
         phrase = transcriber.get_transcription()#.strip()
-        transcriber_end_time = time.time()
         if phrase.lower() in ["quit", "exit", "stop"]:
             print("Stopping transcription and exiting.")
             break
@@ -67,11 +66,14 @@ def main():
             #     # Storing the transcription in history, so that it can be used as a reference
             #     conversation_history.append(f"You said: {full_transcription}\n")
         else:
-            # This is when the transcription should be sent to bot
-            print("Silence.... Ending conversation")
+            # This is when the transcription is be sent to bot
             full_transcription = " ".join(user_transcriptions)
             if not full_transcription.strip():
+                # Initialise wait_start_time if not already set
+                if wait_start_time is None:
+                    wait_start_time = time.time()
                 if not prompted:
+                    #Print the prompt only once during the wait/silence period, for user awareness
                     print("I didn't hear you say a word. Waiting for you... but also counting down to end conversation.")
                     prompted = True
                 if time.time() - wait_start_time > max_wait_time:
@@ -83,10 +85,12 @@ def main():
             # Print the full transcription and send it to the chatbo
                 print(f"You said: {full_transcription}", end='', flush=True)
                 #Chatbot timing
-                chatbot_start_time = time.time()
+                chatbot_start_time = transcriber_end_time = time.time()
                 response = chatbot.get_response(full_transcription)
                 print(f"AI: {response}", end='', flush=True)
                 conversation_history.append(f"AI: {response}\n")
+                print()
+                print(4*"------")
                 user_transcriptions.clear()  # Clear transcriptions after sending to chatbot
 
                 chatbot_end_time = time.time()
@@ -96,7 +100,8 @@ def main():
                 continue
             else:
                 print("Silence detected. Waiting for you to say something...")
-    print("\nFull Conversation: ")
+    print(4*"=======")
+    print("Full Conversation: ")
     for entry in conversation_history:
         print(entry)
 
