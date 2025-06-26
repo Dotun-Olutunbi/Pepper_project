@@ -25,7 +25,7 @@ from chat_master.src.classChatbot import Chatbot
 def main():
     user_transcriptions = []
     conversation_history = []
-    max_wait_time = 15  # seconds to wait for user voice input
+    max_wait_time = 5  # seconds to wait for user voice input
     wait_start_time = None
     prompted = False
 
@@ -47,7 +47,6 @@ def main():
     # print("Authentication successful. Starting transcription. \n(Say 'quit', 'exit', or 'stop' to end conversation)")
     
     while True:
-        # print("Hi, say something...")
         # Initialising total and transcription time calculation
         total_time = total_start_time = time.time()
         if wait_start_time is None:
@@ -76,7 +75,7 @@ def main():
                     print("I didn't hear you say a word. Waiting for you... but also counting down to end conversation.")
                     prompted = True
                 if time.time() - wait_start_time > max_wait_time:
-                    print(f"No input detected for more than {max_wait_time}s. Ending conversation.")
+                    print(f'No input detected for more than {max_wait_time}s. Ending conversation.')
                     break
                 continue
             if full_transcription.strip():
