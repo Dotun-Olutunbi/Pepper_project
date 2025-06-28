@@ -46,13 +46,13 @@ def main():
     
     # print("Authentication successful. Starting transcription. \n(Say 'quit', 'exit', or 'stop' to end conversation)")
     
+    total_start_time = transcriber_start_time = time.time() #To calculate transcription time lag
+
     while True:
         # Initialising total and transcription time calculation
-        total_time = total_start_time = time.time()
         if wait_start_time is None:
             wait_start_time = time.time()
 
-        transcriber_start_time = time.time() #To calculate transcription time lag
         phrase = transcriber.get_transcription()#.strip()
         if phrase.lower() in ["quit", "exit", "stop"]:
             print("Stopping transcription and exiting.")
