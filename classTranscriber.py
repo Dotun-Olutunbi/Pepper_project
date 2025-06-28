@@ -10,9 +10,6 @@ from queue import Queue
 from time import sleep
 from sys import platform
 
-# pipe_path = "/tmp/transcribe_demo_dell_pipe"
-# pipe = open(pipe_path, 'w', buffering=1)
-
 class Transcriber:
     def __init__(self, model="small", non_english=False, energy_threshold=1000,
                  record_timeout=2, phrase_timeout=5, default_microphone='Built-in Microphone'):#HDA Intel PCH: ALC3266 Analog (hw:0,0)'):
@@ -138,12 +135,11 @@ class Transcriber:
                 if self.speech_started and self.phrase_time is not None:
                     # Check if the phrase has been idle for too long
                     if datetime.utcnow() - self.phrase_time > timedelta(seconds=self.phrase_timeout):
-                        print(f"datetime.utcnow() - self.phrase_time is {datetime.utcnow() - self.phrase_time}, phrase timeout reached.")
-                        print(f"phrase timeout is {self.phrase_timeout} seconds.")
-                        print("Phrase timeout reached, pausing transcription.")
+                        # print(f"datetime.utcnow() - self.phrase_time is {datetime.utcnow() - self.phrase_time}, phrase timeout reached.")
+                        # print(f"phrase timeout is {self.phrase_timeout} seconds.")
+                        # print("Phrase timeout reached, pausing transcription.")
                         #print("Full transcription: ")
                         break
-                        self.phrase_bytes = bytes()
 
                 if not self.speech_started and self.leading_empty_count > 10:
                     #That is, waiting for a long time without speech, reset
