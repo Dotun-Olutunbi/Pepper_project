@@ -4,7 +4,11 @@ import argparse
 from datetime import datetime
 from classTranscriber import Transcriber
 from chat_master.src.classChatbot import Chatbot
+from Pepper_actions import pepper_wave, record_video
 # from classChatGemini import GeminiChatbot as Chatbot
+
+def timestamped_entry(s):
+    return f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {s}"
 
 def show_on_tablet(session, tts):
     # A experimental run - URL on Pepper’s internal webserver
@@ -27,6 +31,7 @@ def run_stage_a_robotic(session, tts, transcriber, chatbot, picture_urls):
     Here it is assumed that each phrase represents a complete response
     ...expecting fast, short, complete answers per attempt—fitting for experiments with kids responding to specific questions after prompts
     """
+    record_video(session, duration_sec=5)  # Optional: Record a video of the interaction
     tablet = session.service("ALTabletService")
 
     for picture_number, picture_url in enumerate(picture_urls, start=1):
@@ -66,6 +71,7 @@ def run_stage_a_robotic(session, tts, transcriber, chatbot, picture_urls):
 
             # Early exit if the child wants to stop
             if child_phrase.lower() in ("quit", "exit", "stop"):
+                pepper_wave(session) #Optional: Pepper waves the child
                 tts.say("Okay, we’ll stop here. Goodbye!")
                 return False
 
@@ -78,7 +84,7 @@ def run_stage_a_robotic(session, tts, transcriber, chatbot, picture_urls):
             )
             response = chatbot.get_response(prompt)
             print(f"Child said: {child_phrase}")
-            print(f"AI   says: {response}")
+            print(f"Pepper says: {response}")
             tts.say(response)
 
             # 5) Check for termination tags
@@ -113,8 +119,11 @@ def main0():
     wait_start_time = None
     prompted = False
     user_transcriptions = []
-    max_wait_time = 2 #seconds to wait for user input before ending conversation
-    #Connection to Pepper's NAOqi session
+    '''
+    The max_wait_time specifies how long the system should wait during a silence period before concluding that the user is done speaking. 
+    This helps the application decide when to finish accumulating input and send the captured transcription to the chatbot for processing. Without it, the transcriber could wait indefinitely during gaps in speech, delaying the conversation or causing unwanted behavior.'''
+    max_wait_time = 0 #seconds to wait for user input before ending conversation
+    #Connection to Pepper's Qi session
     try:
         print(f"Connecting to Pepper at {args.ip}:{args.port}...")
         session = qi.Session()
@@ -128,7 +137,7 @@ def main0():
     # Initialize Pepper's TextToSpeech service
     tts = session.service("ALTextToSpeech")
     tts.setLanguage("English")  # Setting language to English
-    tts.setVolume(0.5)  # Setting volume, max is 1.0
+    tts.setVolume(0.1)  # Setting volume, max is 1.0
     # tts.setParameter("speed", 100)  # Set speech speed
     # tts.setParameter("pitch", 100)  # Set pitch to normal
 
@@ -136,9 +145,9 @@ def main0():
     # Initialize the transcriber
     transcriber = Transcriber(
         model="small",
-        energy_threshold=1000,
-        record_timeout=2,
-        phrase_timeout=3,
+        energy_threshold=300,
+        max_record_duration=2, #Setting the max duration allowed for the transcriber to capture audio during a recording session
+        max_phrase_duration=3, #Sets how long a single spoken phrase can be before it's finalised and processed. Note any continuous speech longer than 3swill be cut off and processed as a full phrase.
         default_microphone="HDA Intel PCH: ALC3266 Analog (hw:0,0)"
     )
 
@@ -149,8 +158,13 @@ def main0():
         return
     # tts.say("If you don't like to talk now, \nJust say 'quit' or 'stop' to end our conversation)")
     print("Authentication successful. Starting transcription. \n(Say 'quit', 'exit', or 'stop' to end conversation)")
+    
+    # This is when the conversation starts
+    conversation_start_time = datetime.now()
+
+    pepper_wave(session) #Optional: Pepper waves the child
     greeting = chatbotAlive.get_response("greet")
-    print(f"AI: {greeting}")
+    print(f"Pepper: {greeting}")
     # Commented out to reduce distrations/noise in the lab
     # tts.say(greeting)
     time.sleep(1)  # A pause to let the greetings complete before starting the loop
@@ -197,9 +211,9 @@ def main0():
                 #Chatbot timing
                 chatbot_start_time = transcriber_end_time = time.time()
                 response = chatbotAlive.get_response(full_transcription)
-                print(f"AI: {response}", end='', flush=True)
+                print(f"Pepper: {response}", end='', flush=True)
                 tts.say(response)
-                conversation_history.append(f"AI: {response}\n")
+                conversation_history.append(f"Pepper: {response}\n")
                 print()
                 print(4*"------")
                 user_transcriptions.clear()  # Clear transcriptions after sending to chatbot
@@ -231,7 +245,7 @@ def log_interaction(exp_event, ai_context, ai_instruction, child_transcript, ai_
         f"------------------------\n\n"
     )
     # This structured log entry is appended to the conversation history list.
-    conversation_history.append(log_entry)
+    conversation_history.append(timestamped_entry(log_entry))
 
 def main():
     #This is the main function for the experiment with Pepper, where it shows a story in pictures and interacts with the child.
@@ -279,9 +293,9 @@ def main():
     
     transcriber = Transcriber(
         model="small",
-        energy_threshold=1000,
-        record_timeout=2,
-        phrase_timeout=3,
+        energy_threshold=500,
+        max_record_duration=2,
+        max_phrase_duration=3,
         default_microphone="HDA Intel PCH: ALC3266 Analog (hw:0,0)"
     )
 
@@ -292,9 +306,15 @@ def main():
         return
     # tts.say("If you don't like to talk now, \nJust say 'quit' or 'stop' to end our conversation)")
     print("Authentication successful. Starting transcription. \n(Say 'quit', 'exit', or 'stop' to end conversation)")
+    
+    # This is when the conversation starts
+    conversation_start_time = datetime.now()
+
     greeting = chatbotAlive.get_response("greet")
-    print(f"AI: {greeting}")
-    conversation_history.append(f"AI: {greeting}\n")
+    pepper_wave(session, args.ip, args.port) #Optional: Pepper waves the child
+    print(f"Pepper: {greeting}")
+    conversation_history.append(timestamped_entry(f"Pepper: {greeting}\n"))
+    # conversation_history.append(f"Pepper: {greeting}\n")
     tts.say(greeting)
     transcriber.reset()
     time.sleep(1)  # A brief pause to let the greetings complete before starting the loop
@@ -308,22 +328,24 @@ def main():
             stage_b_prompt = "Fantastic! Can you invent your own continuation of the story."
             tts.say(stage_b_prompt)
             transcriber.reset()
-            conversation_history.append(f"AI: {stage_b_prompt}\n")
+            conversation_history.append(timestamped_entry(f"You said: {stage_b_prompt}\n"))
         else:
         # Child asked to stop
             return
     finally:
+        conversation_end_time = datetime.now()
         print("\n" + 4*"=======")
         print("Full Conversation History (Console):")
         for entry in conversation_history:
             print(entry, end='')
         # --- Saves the history to the unique file ---
-        save_history_to_file(conversation_history, log_filename)
+        save_history_to_file(conversation_history, log_filename, start_time=conversation_start_time, end_time=conversation_end_time)
 
 
 def run_stage_a(session, tts, transcriber, chatbot, picture_urls):
     print("Running Stage A: Showing pictures and collecting responses...")
     tablet = session.service("ALTabletService")
+    max_picture_time = 300 #Average of 5 minutes per picture
 
     for picture_number, picture_url in enumerate(picture_urls, start=1):
         exp_event = f"showing picture {picture_number}"
@@ -337,18 +359,32 @@ def run_stage_a(session, tts, transcriber, chatbot, picture_urls):
         transcriber.reset()
         print(f"picture {picture_number} of {len(picture_urls)}: {picture_url}")
         tablet.showImage(picture_url)
+        
+        # Time picture starts to be shown
+        picture_start_time = time.time()
+
+        # Show an HTML page instead of an image
+        # This is optional, but it can be used to provide a more interactive experience.
+        # render_interactive_page(session)
+
         attempts = 0
         while attempts < 3:
+            # Waits for up to 30 seconds, loops (retrying) up to 3 times
+            if time.time() - picture_start_time >= max_picture_time:
+                print("Time limit reached for this picture. Moving on...")
+                break
+
             user_transcriptions = []
             wait_start_time = time.time()
             prompted = False
-            max_wait_time = 5  # seconds of total silence allowed per speech attempt. If time of silence exceeds this, the transcription is considered finished.
+            max_wait_time = 2  # seconds of total silence allowed per speech attempt. If time of silence exceeds this, the transcription is considered finished.
 
             print("Listening for the child's response...")
             while True:
                 phrase = transcriber.get_transcription().strip()
                 if phrase.lower() in ["quit", "exit", "stop"]:
                     tts.say("Okay, we’ll stop here. Goodbye!")
+                    pepper_wave(session) #Optional: Pepper waves the child
                     transcriber.reset()
                     return False
 
@@ -375,7 +411,9 @@ def run_stage_a(session, tts, transcriber, chatbot, picture_urls):
                 continue
 
             if full_transcription.strip():
-                conversation_history.append(f"You said: {full_transcription}\n")
+                # conversation_history.append(f"You said: {full_transcription}\n")
+                conversation_history.append(timestamped_entry(f"You said: {full_transcription}\n"))
+
             print(f"You said: {full_transcription}") # This provides feedback to the console.
 
             prompt = (
@@ -387,7 +425,7 @@ def run_stage_a(session, tts, transcriber, chatbot, picture_urls):
 
             try:
                 response = chatbot.get_response(prompt)
-                print(f"AI said: {response}") # Prints the AI's response to the console.
+                print(f"Pepper said: {response}") # Prints the Pepper's response to the console.
                 log_interaction(
                         exp_event=exp_event,
                         ai_context=ai_context,
@@ -395,7 +433,8 @@ def run_stage_a(session, tts, transcriber, chatbot, picture_urls):
                         child_transcript=full_transcription,
                         ai_response=response
                     )
-                conversation_history.append(f"AI: {response}\n")
+                conversation_history.append(timestamped_entry(f"Pepper: {response}\n"))
+                # conversation_history.append(f"Pepper: {response}\n")
                 tts.say(response)
                 transcriber.reset()
                 user_transcriptions.clear()  # Clear transcriptions after sending to chatbot
@@ -415,19 +454,35 @@ def run_stage_a(session, tts, transcriber, chatbot, picture_urls):
         tablet.hideImage()
     return True
 
-# --- FUNCTION TO SAVE THE CHAT HISTORY ---
-def save_history_to_file(history, filename):
+def render_interactive_page(session):
+    pass  # This function is a placeholder for rendering an interactive HTML page on Pepper's tablet.
+    tablet_service = session.service("ALTabletService")
+    url = "http://198.18.0.1/apps/your_app/interactive_image_1.html"
+    tablet_service.showWebview(url)
+    # Subscribe to the custom event from the tablet
+    memory_service = session.service("ALMemory")
+    subscriber = memory_service.subscriber("ALTabletService/ALTabletBinding/button_pressed")
+    # subscriber.signal.connect(cat_clicked)
+
+
+def save_history_to_file(history, filename, start_time=None, end_time=None):
     """
     Saves the conversation history list to a text file.
 
     Args:
         history (list): A list of strings, where each string is a line of dialogue.
         filename (str): The name of the file to save the history to.
+        start_time (datetime): Conversation start time.
+        end_time (datetime): Conversation end time.
     """
     try:
         with open(filename, 'w') as f:
+            if start_time:
+                f.write(f"Conversation started at: {start_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
             for entry in history:
                 f.write(entry)
+            if end_time:
+                f.write(f"\nConversation ended at: {end_time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         print(f"Conversation history successfully saved to: {filename}")
     except Exception as e:
         print(f"An error occurred while saving the history file: {e}")
