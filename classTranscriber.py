@@ -12,12 +12,12 @@ from sys import platform
 
 class Transcriber:
     def __init__(self, model="small", non_english=False, energy_threshold=1000,
-                 record_timeout=2, phrase_timeout=5, default_microphone='Built-in Microphone'):#HDA Intel PCH: ALC3266 Analog (hw:0,0)'):
+                 max_record_duration=2, max_phrase_duration=5, default_microphone='Built-in Microphone'):#HDA Intel PCH: ALC3266 Analog (hw:0,0)'):
         self.non_english = non_english
         self.model= model
         self.energy_threshold = energy_threshold
-        self.record_timeout = record_timeout
-        self.phrase_timeout = phrase_timeout
+        self.record_timeout = max_record_duration
+        self.phrase_timeout = max_phrase_duration
         self.default_microphone = default_microphone
         self.source = None
         self.transcription = []
@@ -46,9 +46,9 @@ class Transcriber:
         self.audio_model = whisper.load_model(model)
         print(f"Using Whisper model: {model}")
 
-        self.record_timeout = record_timeout
+        self.record_timeout = max_record_duration
         self.data_queue = Queue()
-        self.phrase_timeout = phrase_timeout
+        self.phrase_timeout = max_phrase_duration
         self.transcription = ['']
         self.empty_text_count = 0
         self.recorder = sr.Recognizer()
@@ -74,7 +74,7 @@ class Transcriber:
 
             # Create a background thread that will pass us raw audio bytes.
             # We could do this manually but SpeechRecognizer provides a nice helper.
-        self.recorder.listen_in_background(self.source, record_callback, phrase_time_limit=record_timeout)
+        self.recorder.listen_in_background(self.source, record_callback, phrase_time_limit=max_record_duration)
 
             # Cue the user that we're ready to go.
         print("Transcriber initialised and Model loaded. Ready.\n", flush=True)
@@ -83,6 +83,19 @@ class Transcriber:
         self.leading_empty_count = 0
         self.post_speech_empty_count = 0
         self.speech_started = False
+
+    def reset(self):
+        """
+        Clears the internal audio data queue and resets the phrase state to prevent echoing.
+        This is called before listening for a new, distinct response.
+        """
+        with self.data_queue.mutex:
+            self.data_queue.queue.clear()
+        self.phrase_bytes = bytes()
+        self.phrase_time = None
+        self.speech_started = False
+        print("--- Transcriber state has been reset. ---")
+
 
     def get_transcription(self):
         """
