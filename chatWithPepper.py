@@ -1,11 +1,15 @@
 import time
 import qi
 import argparse
+import requests
+import re
 from datetime import datetime
 from classTranscriber import Transcriber
 from chat_master.src.classChatbot import Chatbot
 from Pepper_actions import pepper_wave, record_video
 # from classChatGemini import GeminiChatbot as Chatbot
+
+
 
 def timestamped_entry(s):
     return f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {s}"
@@ -22,6 +26,20 @@ def show_on_tablet(session, tts):
     except Exception as e:
         print("Could not connect to ALTabletService. Tablet features may not be available.")
         print(f"Error: {e}")
+
+def navigation_command(phrase, total_pics):
+    """Returns new index if navigation, otherwise None."""
+    phrase = phrase.lower()
+    # Back/previous
+    if "back" in phrase or "previous" in phrase:
+        return "BACK"
+    # Find a number in the phrase (e.g., "picture 2", "go to 3")
+    match = re.search(r"(\d+)", phrase)
+    if match:
+        num = int(match.group(1))
+        if 1 <= num <= total_pics:
+            return num - 1  # zero-indexed
+    return None
 
 def run_stage_a_robotic(session, tts, transcriber, chatbot, picture_urls):
     """
@@ -44,7 +62,7 @@ def run_stage_a_robotic(session, tts, transcriber, chatbot, picture_urls):
         )
         print(f"[{exp_event}]")
         tts.say(ai_instruction)
-
+        time.sleep(1.5)  # A brief pause to let the prompt complete`
         # 2) method shows the image
         tablet.showImage(picture_url)
 
@@ -71,7 +89,7 @@ def run_stage_a_robotic(session, tts, transcriber, chatbot, picture_urls):
 
             # Early exit if the child wants to stop
             if child_phrase.lower() in ("quit", "exit", "stop"):
-                pepper_wave(session) #Optional: Pepper waves the child
+               # pepper_wave(session) #Optional: Pepper waves the child
                 tts.say("Okay, we’ll stop here. Goodbye!")
                 return False
 
@@ -122,7 +140,7 @@ def main0():
     '''
     The max_wait_time specifies how long the system should wait during a silence period before concluding that the user is done speaking. 
     This helps the application decide when to finish accumulating input and send the captured transcription to the chatbot for processing. Without it, the transcriber could wait indefinitely during gaps in speech, delaying the conversation or causing unwanted behavior.'''
-    max_wait_time = 0 #seconds to wait for user input before ending conversation
+    max_wait_time = 10 #seconds to wait for user input before ending conversation
     #Connection to Pepper's Qi session
     try:
         print(f"Connecting to Pepper at {args.ip}:{args.port}...")
@@ -137,7 +155,7 @@ def main0():
     # Initialize Pepper's TextToSpeech service
     tts = session.service("ALTextToSpeech")
     tts.setLanguage("English")  # Setting language to English
-    tts.setVolume(0.1)  # Setting volume, max is 1.0
+    tts.setVolume(0.8)  # Setting volume, max is 1.0
     # tts.setParameter("speed", 100)  # Set speech speed
     # tts.setParameter("pitch", 100)  # Set pitch to normal
 
@@ -145,10 +163,10 @@ def main0():
     # Initialize the transcriber
     transcriber = Transcriber(
         model="small",
-        energy_threshold=300,
+        energy_threshold=700,
         max_record_duration=2, #Setting the max duration allowed for the transcriber to capture audio during a recording session
         max_phrase_duration=3, #Sets how long a single spoken phrase can be before it's finalised and processed. Note any continuous speech longer than 3swill be cut off and processed as a full phrase.
-        default_microphone="HDA Intel PCH: ALC3266 Analog (hw:0,0)"
+        default_microphone="sysdefault" #HDA Intel PCH: ALC897 Analog (hw:0,0)"
     )
 
     chatbotAlive = Chatbot()
@@ -162,11 +180,11 @@ def main0():
     # This is when the conversation starts
     conversation_start_time = datetime.now()
 
-    pepper_wave(session) #Optional: Pepper waves the child
+    #pepper_wave(session) #Optional: Pepper waves the child
     greeting = chatbotAlive.get_response("greet")
     print(f"Pepper: {greeting}")
-    # Commented out to reduce distrations/noise in the lab
-    # tts.say(greeting)
+    # Comment out to reduce distrations/noise in the lab
+    tts.say(greeting)
     time.sleep(1)  # A pause to let the greetings complete before starting the loop
     time_before_transcription = time.time()  # To calculate transcription lag
     while True:
@@ -284,19 +302,18 @@ def main():
         print(f"Could not connect to Pepper at {args.ip}:{args.port}. Please check the IP and port.")
         return
     print("Connected to Pepper successfully.")
-
+    
     # Initialize Pepper's TextToSpeech service
     tts = session.service("ALTextToSpeech")
-    tts.setLanguage("English")  # Set language to English
-    tts.setVolume(0.7)  # Set volume to 50%
-    # tts.setParameter("speed", 100)  # Set speech speed to 100%
-    
+    tts.setLanguage("English")  # Setting language to English
+    tts.setVolume(0.8)  # Setting volume, max is 1.0
+
     transcriber = Transcriber(
-        model="small",
-        energy_threshold=500,
+        model="turbo",
+        energy_threshold=600,
         max_record_duration=2,
         max_phrase_duration=3,
-        default_microphone="HDA Intel PCH: ALC3266 Analog (hw:0,0)"
+        default_microphone="HDA Intel PCH: ALC897 Analog (hw:0,0)" #HDA Intel PCH: ALC3266 Analog (hw:0,0)"
     )
 
     chatbotAlive = Chatbot()
@@ -311,13 +328,43 @@ def main():
     conversation_start_time = datetime.now()
 
     greeting = chatbotAlive.get_response("greet")
-    pepper_wave(session, args.ip, args.port) #Optional: Pepper waves the child
+    #pepper_wave(session, args.ip, args.port) #Optional: Pepper waves the child
     print(f"Pepper: {greeting}")
     conversation_history.append(timestamped_entry(f"Pepper: {greeting}\n"))
-    # conversation_history.append(f"Pepper: {greeting}\n")
+    conversation_history.append(f"Pepper: {greeting}\n")
     tts.say(greeting)
+    time.sleep(1.5)  # A brief pause to let the prompt complete`
+    conversation_history.append(timestamped_entry(f"Pepper: {greeting}\n"))
     transcriber.reset()
-    time.sleep(1)  # A brief pause to let the greetings complete before starting the loop
+    # Listen for readiness confirmation from child
+    wait_start = time.time()
+    max_wait = 20  # seconds
+    confirmed = False
+
+    while time.time() - wait_start < max_wait:
+        phrase = transcriber.get_transcription().strip().lower()
+
+        if phrase in ["yes", "yeah", "i'm ready", "ready", "sure", "okay"]:
+            confirmed = True
+            tts.say("Awesome! Let's begin.")
+            conversation_history.append(timestamped_entry("Child: " + phrase + "\n"))
+            break
+        elif phrase in ["no", "not now", "i'm not ready", "maybe later"]:
+            tts.say("That's okay. We can try again later. Bye!")
+            return
+        elif phrase:
+            # Unexpected input
+            conversation_history.append(timestamped_entry("Child: " + phrase + "\n"))
+            tts.say("I'll take that as a yes. Let's get's started!")
+            confirmed = True
+            break
+        else:
+            tts.say("Take your time. I'm listening...")
+            time.sleep(2)
+
+    if not confirmed:
+        tts.say("I didn’t hear anything. Maybe next time!")
+        return
 
 
     # Run Stage A
@@ -327,10 +374,21 @@ def main():
         # Transitioning to “creating a story” here
             stage_b_prompt = "Fantastic! Can you invent your own continuation of the story."
             tts.say(stage_b_prompt)
+            time.sleep(1.5)  # A brief pause to let the prompt complete before starting Stage B``
             transcriber.reset()
-            conversation_history.append(timestamped_entry(f"You said: {stage_b_prompt}\n"))
+            conversation_history.append(timestamped_entry(f"Pepper: {stage_b_prompt}\n"))
+            log_interaction(
+                exp_event="starting stage B",
+                ai_context="child has finished describing pictures",
+                ai_instruction=stage_b_prompt,
+                child_transcript="",
+                ai_response=stage_b_prompt
+            )   
+
+            # Start Stage B conversation loop
+            run_stage_b(session, tts, transcriber, chatbotAlive)
         else:
-        # Child asked to stop
+        # Child asked to stop            print(f"Loading Whisper model: {model}")
             return
     finally:
         conversation_end_time = datetime.now()
@@ -341,25 +399,92 @@ def main():
         # --- Saves the history to the unique file ---
         save_history_to_file(conversation_history, log_filename, start_time=conversation_start_time, end_time=conversation_end_time)
 
+def enable_autonomous_mode(session, tts=None):
+    """
+    Enables Pepper's autonomous behaviors, including gaze tracking and basic awareness.
+    Call this after connecting to the session.
+    """
+    try:
+        autonomous_life = session.service("ALAutonomousLife")
+        basic_awareness = session.service("ALBasicAwareness")
+
+        # Enable general autonomous behaviors
+        current_state = autonomous_life.getState()
+        if current_state != "solitary":
+            print(f"AutonomousLife current state: {current_state}. Switching to 'solitary' mode.")
+            autonomous_life.setState("solitary")
+        else:
+            print("Pepper is already in 'solitary' autonomous mode.")
+
+        # Enable basic awareness features
+        basic_awareness.setEngagementMode("FullyEngaged")  # or "SemiEngaged"
+        basic_awareness.setTrackingMode("Head")  # or "Body", but "Head" is gentler
+        basic_awareness.startAwareness()
+
+        print("Autonomous mode and gaze tracking enabled.")
+
+        # Optional: Enable eye contact during speech
+        if tts:
+            tts.setParameter("enableEyeContact", True)
+            print("Eye contact enabled for speech.")
+
+    except Exception as e:
+        print(f"[Autonomy Setup Error] {e}")
+
+def set_leds_thinking(session):
+    """
+    Sets Pepper's face LEDs to blue to indicate 'thinking' or waiting.
+    """
+    try:
+        leds = session.service("ALLeds")
+        leds.fadeRGB("FaceLeds", 0x0000FF, 0.3)  # Blue
+    except Exception as e:
+        print(f"[LED Error] Failed to set thinking LEDs: {e}")
+
+def set_leds_speaking(session):
+    """
+    Sets Pepper's face LEDs to green to indicate it is speaking or ready to respond.
+    """
+    try:
+        leds = session.service("ALLeds")
+        leds.fadeRGB("FaceLeds", 0x00FF00, 0.3)  # Green
+    except Exception as e:
+        print(f"[LED Error] Failed to set speaking LEDs: {e}")
+
+def set_leds_idle(session):
+    """
+    Set Pepper's face LEDs to neutral white (default) after response.
+    """
+    try:
+        leds = session.service("ALLeds")
+        leds.fadeRGB("FaceLeds", 0xFFFFFF, 0.3)  # White
+    except Exception as e:
+        print(f"[LED Error] Failed to reset LEDs: {e}")
+
 
 def run_stage_a(session, tts, transcriber, chatbot, picture_urls):
-    print("Running Stage A: Showing pictures and collecting responses...")
+    print("Running Stage A: Showing pictures and collecting responses sequentially...")
     tablet = session.service("ALTabletService")
-    max_picture_time = 300 #Average of 5 minutes per picture
+    max_picture_time = 180 #Average of 5 minutes per picture
+
+    intro_instruction = "You will now be shown a short story in pictures."
+    tts.say(intro_instruction)
+    conversation_history.append(timestamped_entry(f"Pepper: {intro_instruction}\n"))
 
     for picture_number, picture_url in enumerate(picture_urls, start=1):
         exp_event = f"showing picture {picture_number}"
         print(f"Picture url: {picture_url}")
         ai_context = exp_event
-        ai_instruction = (
-            f"You will now be shown a short story in pictures. "
-            f"So, let's take a look at picture {picture_number}. Can you tell me about it?"
-        )
+        
+        ai_instruction = f"This is picture {picture_number}. Can you tell me about it?"
         tts.say(ai_instruction)
+        conversation_history.append(timestamped_entry(f"Pepper: {ai_instruction}\n"))
+
+        time.sleep(1.5)  # A brief pause to let the prompt complete`
         transcriber.reset()
         print(f"picture {picture_number} of {len(picture_urls)}: {picture_url}")
         tablet.showImage(picture_url)
-        
+
         # Time picture starts to be shown
         picture_start_time = time.time()
 
@@ -377,7 +502,7 @@ def run_stage_a(session, tts, transcriber, chatbot, picture_urls):
             user_transcriptions = []
             wait_start_time = time.time()
             prompted = False
-            max_wait_time = 2  # seconds of total silence allowed per speech attempt. If time of silence exceeds this, the transcription is considered finished.
+            max_wait_time = 3  # seconds of total silence allowed per speech attempt. If time of silence exceeds this, the statement is considered complete.
 
             print("Listening for the child's response...")
             while True:
@@ -406,6 +531,7 @@ def run_stage_a(session, tts, transcriber, chatbot, picture_urls):
             full_transcription = " ".join(user_transcriptions)
             if not full_transcription:
                 tts.say("I didn’t hear anything clear. Can you try again?")
+                time.sleep(1.5)  # A brief pause to let the prompt complete before starting Stage B``
                 transcriber.reset()
                 attempts += 1
                 continue
@@ -435,27 +561,239 @@ def run_stage_a(session, tts, transcriber, chatbot, picture_urls):
                     )
                 conversation_history.append(timestamped_entry(f"Pepper: {response}\n"))
                 # conversation_history.append(f"Pepper: {response}\n")
-                tts.say(response)
+                tts.say(response.replace("##SATISFACTORY##", "").replace("##UNCLEAR##", "").replace("##NOT INTERESTED##", ""))
+                time.sleep(1.5)  # A brief pause to let the prompt complete before starting Stage B``
                 transcriber.reset()
                 user_transcriptions.clear()  # Clear transcriptions after sending to chatbot
             except Exception as e:
                 print(f"Error during chatbot response: {e}")
                 tts.say("I had trouble understanding that. I think I have a headache. Ouch!")
+                time.sleep(1.5)  # A brief pause to let the prompt complete before starting Stage B``
                 transcriber.reset()
                 attempts += 1
                 continue
             
 
-            if "##SATISFACTORY RESPONSE##" in response or "##NOT INTERESTED##" in response:
+            if "##SATISFACTORY##" in response or "##NOT INTERESTED##" in response:
                 break  # move on to next picture
+
+            if "##SATISFACTORY##" in response and not phrase and time.time() - wait_start_time > 10:
+                tts.say("That's okay. We can move to the next picture.")
+                time.sleep(1)  # A brief pause to let the prompt complete before starting Stage B``
+
+                break
 
             attempts += 1
 
         tablet.hideImage()
     return True
 
+def run_stage_b(session, tts, transcriber, chatbot, max_stage_duration=300):
+    """
+    Stage B: Free storytelling with a 5-minute max session time.
+    """
+    tts.say("Great! Now you can invent your own continuation of the story. What happens next?")
+    time.sleep(1.5)  # A brief pause to let the prompt complete before starting Stage B``
+    print("Story creation phase started.")
+    stage_start_time = time.time()
+
+    wait_start_time = stage_start_time
+    while True:
+        if time.time() - stage_start_time > max_stage_duration:
+            tts.say("Thanks for your story! That’s the end of this activity.")
+            break
+
+        phrase = transcriber.get_transcription().strip()
+        conversation_history.append(timestamped_entry(f"Child: {phrase}\n"))
+
+
+        if phrase.lower() in ["quit", "exit", "stop"]:
+            tts.say("Okay, story time is over. That was fun!")
+            break
+
+        if not phrase:
+            if time.time() - wait_start_time > 45:
+                tts.say("It seems you're done. Thank you for your story!")
+                break
+            continue
+
+        wait_start_time = time.time()
+        prompt = (
+            f"AI-CONTEXT: The child is continuing the story.\n"
+            f"AI-INSTRUCTION: Respond naturally to help continue their story.\n"
+            f"CHILD-TRANSCRIPT: {phrase}"
+        )
+
+        set_leds_thinking(session) # Set LEDs to indicate thinking
+        response = chatbot.get_response(prompt)
+        set_leds_speaking(session)  # Set LEDs to indicate speaking
+        tts.say(response)
+        set_leds_idle(session)
+        conversation_history.append(timestamped_entry(f"Pepper: {response}\n"))
+
+        log_interaction(
+            exp_event="stage B - storytelling",
+            ai_context="child is inventing a continuation of the story",
+            ai_instruction="Continue the story based on what the child says.",
+            child_transcript=phrase,
+            ai_response=response
+        )
+
+
+def run_stage_a_interactive_screen(session, tts, transcriber, chatbot, picture_urls):
+    #This is run_stage_a version 2. In development, it is more interactive and allows for possible navigation between pictures.
+    print("Running Stage A: Showing pictures and collecting responses...")
+
+    tablet = session.service("ALTabletService")
+    max_picture_time = 300
+    total_pics = len(picture_urls)
+    current_index = 0
+
+    while 0 <= current_index < total_pics:
+        picture_number = current_index + 1
+        picture_url = picture_urls[current_index]
+        exp_event = f"showing picture {picture_number}"
+        print(f"Picture url: {picture_url}")
+
+        ai_context = exp_event
+        ai_instruction = (
+            f"You will now be shown a short story in pictures. "
+            f"So, let's take a look at picture {picture_number}. Can you tell me about it? "
+            "If you want to see another picture, say 'back' to go to the previous one, or 'go to picture 2'."
+        )
+
+        tts.say(ai_instruction)
+        time.sleep(1.5)  # A brief pause to let the prompt complete before starting Stage B``
+        transcriber.reset()
+        print(f"picture {picture_number} of {total_pics}: {picture_url}")
+
+        tablet.showImage(picture_url)
+        picture_start_time = time.time()
+        attempts = 0
+
+        while attempts < 3:
+            if time.time() - picture_start_time >= max_picture_time:
+                print("Time limit reached for this picture. Moving on...")
+                break
+
+            user_transcriptions = []
+            wait_start_time = time.time()
+            prompted = False
+            max_wait_time = 0
+
+            print("Listening for the child's response...")
+            while True:
+                phrase = transcriber.get_transcription().strip()
+
+                # Navigation logic
+                nav_cmd = navigation_command(phrase, total_pics) if phrase else None
+
+                if phrase.lower() in ["quit", "exit", "stop"]:
+                    tts.say("Okay, we’ll stop here. Goodbye!")
+                    pepper_wave(session)
+                    transcriber.reset()
+                    return False
+                elif nav_cmd == "BACK":
+                    if current_index == 0:
+                        tts.say("You're already at the first picture.")
+                        time.sleep(1.5)  # A brief pause to let the prompt complete before starting Stage B``
+                    else:
+                        tts.say(f"Going back to picture {current_index}.")
+                        time.sleep(1.5)  # A brief pause to let the prompt complete`
+                        current_index -= 1
+                    tablet.hideImage()
+                    break  # Restart main while loop
+                elif isinstance(nav_cmd, int):
+                    if nav_cmd == current_index:
+                        tts.say(f"You're already viewing picture {nav_cmd + 1}.")
+                        time.sleep(1.5)  # A brief pause to let the prompt complete`
+                    else:
+                        tts.say(f"Jumping to picture {nav_cmd + 1}.")
+                        time.sleep(1.5)  # A brief pause to let the prompt complete`
+                        current_index = nav_cmd
+                    tablet.hideImage()
+                    break  # Restart main while loop
+
+                if phrase:
+                    user_transcriptions.append(phrase)
+                    wait_start_time = time.time()
+                    prompted = False
+                    print(f"Captured: {phrase}")
+                else:
+                    if not prompted:
+                        print("Waiting... (child may still be speaking)")
+                        prompted = True
+                    if time.time() - wait_start_time > max_wait_time:
+                        break  # Finish attempt
+
+            # After navigation, return to display new or same image as needed:
+            if nav_cmd:
+                # Already handled navigation, so skip attempt logic
+                break
+
+            # ... (rest of processing logic remains unchanged)
+            full_transcription = " ".join(user_transcriptions)
+
+            if not full_transcription:
+                tts.say("I didn’t hear anything clear. Can you try again?")
+                transcriber.reset()
+                attempts += 1
+                continue
+
+            if full_transcription.strip():
+                conversation_history.append(timestamped_entry(f"You said: {full_transcription}\n"))
+                print(f"You said: {full_transcription}")
+
+                prompt = (
+                    f"EXP-EVENT: {exp_event}\n"
+                    f"AI-CONTEXT: {ai_context}\n"
+                    f"AI-INSTRUCTION: {ai_instruction}\n"
+                    f"CHILD-TRANSCRIPT: {full_transcription}"
+                )
+                
+                try:
+                    time_before_response = time.time()
+                    set_leds_thinking(session)  # Set LEDs to indicate thinking
+                    response = chatbot.get_response(prompt)
+                    time_after_response = time.time()
+                    print(f"Pepper said: {response}")
+                    print(f"[Response Time: {time_after_response - time_before_response:.2f} seconds]")
+                    log_interaction(
+                        exp_event=exp_event,
+                        ai_context=ai_context,
+                        ai_instruction=ai_instruction,
+                        child_transcript=full_transcription,
+                        ai_response=response
+                    )
+                    set_leds_speaking(session)  # Set LEDs to indicate speaking
+                    conversation_history.append(timestamped_entry(f"Pepper: {response}\n"))
+                    tts.say(response)
+                    time.sleep(1.5)  # A brief pause to let the prompt complete`
+                    set_leds_idle(session)
+                    transcriber.reset()
+                    user_transcriptions.clear()
+                except Exception as e:
+                    print(f"Error during chatbot response: {e}")
+                    tts.say("I had trouble understanding that. I think I have a headache. Ouch!")
+                    time.sleep(1.5)  # A brief pause to let the prompt complete`
+                    transcriber.reset()
+                    attempts += 1
+                    continue
+
+                if "##SATISFACTORY RESPONSE##" in response or "##NOT INTERESTED##" in response:
+                    print(f"Response 'satisfactory' or 'not interested'. Moving to next picture.")
+                    break
+
+            attempts += 1
+
+        tablet.hideImage()
+        current_index += 1  # Normal forward progression
+
+    return True
+
+
 def render_interactive_page(session):
-    pass  # This function is a placeholder for rendering an interactive HTML page on Pepper's tablet.
+    pass  # This function is in development, a placeholder for rendering an interactive HTML page on Pepper's tablet.
     tablet_service = session.service("ALTabletService")
     url = "http://198.18.0.1/apps/your_app/interactive_image_1.html"
     tablet_service.showWebview(url)
