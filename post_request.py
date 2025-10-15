@@ -27,7 +27,9 @@ headers = {"Authorization": f"Bearer {id_token}"}
 room_payload = {"productId": product_id}
 room_response = requests.post(room_token_url, headers=headers, data=room_payload)
 room_response.raise_for_status()
-# print(room_response.json())
+print("------------room data------------------")
+print(room_response.json())
+print("--------------------------------------")
 
 # ...check the validity of the room token...
 import datetime
@@ -46,14 +48,21 @@ print("---------- create agent token ----------")
 # 1. get user token (creates the room)
 # user_resp = requests.post(room_token_url, headers=headers, data={"productId": product_id})
 user_data = room_response.json()["data"]
-room_name = user_data["roomName"]          # <-- keep this
+room_name = user_data["roomName"]
+print("Using room:", room_name)
 
 # 2. get agent token for the same room as the user
+payload_agent = {"productId": product_id}#, "roomName": room_name}
+
 agent_resp = requests.post(room_token_url,
                           headers=headers,
-                          data={"productId": "agent_default",
-                                "roomName": room_name})   # <-- reuse room
+                          data=payload_agent)
+
+print("------------agent data------------------")
+print(agent_resp.json())
 agent_data = agent_resp.json()["data"]
+
+
 
 # ----------  show / save tokens  ----------
 print("\n-----  USER  -----")
