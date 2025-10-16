@@ -4,95 +4,41 @@ from livekit import rtc
 import numpy as np
 import dotenv
 import concurrent.futures
+import time
+from collections import deque
+from latencytracker import LatencyTracker
 
 dotenv.load_dotenv(".env.livekit")
 USER_TOKEN = dotenv.get_key(".env.livekit", "USER_TOKEN")
 ROOM_NAME = dotenv.get_key(".env.livekit", "ROOM_NAME")
 WS_URL = dotenv.get_key(".env.livekit", "LIVEKIT_URL")
 
-# async def play_audio_track(track: rtc.RemoteAudioTrack):
-#     """Play incoming audio from the agent."""
-#     pa = pyaudio.PyAudio()
-    
-#     # List available audio devices
-#     print(f"[DEBUG] Available audio output devices:")
-#     for i in range(pa.get_device_count()):
-#         info = pa.get_device_info_by_index(i)
-#         if info['maxOutputChannels'] > 0:
-#             print(f"  [{i}] {info['name']}")
-    
-#     stream = pa.open(
-#         format=pyaudio.paInt16,
-#         channels=1,
-#         rate=48000,
-#         output=True,
-#         frames_per_buffer=480)
-    
-#     print("[DEBUG] Audio stream opened")
-#     audio_stream = rtc.AudioStream(track)
-#     frame_count = 0
-    
-#     try:
-#         async for event in audio_stream:
-#             frame_count += 1
-#             if frame_count % 100 == 0:  # Print every 100 frames
-#                 print(f"\n[DEBUG] Received {frame_count} audio frames")
-#             frame = event.frame
-#             # The event.frame is an AudioFrame object
-#             # Access the raw data buffer directly
-#             audio_data = bytes(event.frame.data)
-#             stream.write(audio_data)
-#             # stream.write(frame.data.tobytes())
-#     except Exception as e:
-#         print(f"\nError playing audio: {e}")
-#         import traceback
-#         traceback.print_exc()
-#     finally:
-#         print(f"\n[DEBUG] Audio playback stopped. Total frames: {frame_count}")
-#         stream.stop_stream()
-#         stream.close()
-#         pa.terminate()
-
+latency_tracker = LatencyTracker()
 
 async def play_audio_track(track: rtc.RemoteAudioTrack):
     pa = pyaudio.PyAudio()
-    stream = pa.open(format=pyaudio.paInt16,
-                     channels=1,
-                     rate=24000,
-                     output=True,
-                     frames_per_buffer=480)
-
     audio_stream = rtc.AudioStream(track)
-
-    # ---- executor pool for blocking PyAudio ----
     loop = asyncio.get_running_loop()
+    
     stream = None
-    frame_count = 0
+    # frame_count = 0
+    agent_was_speaking = False
+    # silence_start = None
     first_frame = True
+    silence_frames = 0
+    silence_threshold_frames = int(latency_tracker.silence_duration * 100)  # ~100 frames/sec
+    
+    
     with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
         try:
             async for event in audio_stream:
                 frame = event.frame
-                frame_count += 1
+                # frame_count += 1
                 if first_frame:
-                    print(f"\n[DEBUG] Received first audio frame")
+                    # print(f"\n[DEBUG] Received first audio frame")
+                    print(f"\n[First frameAUDIO CONFIG] {frame.sample_rate}Hz, {frame.num_channels}ch")
                     first_frame = False
-                    
-                    with open("audio_format.txt", "w") as f:
-                        f.write(f"Sample rate: {frame.sample_rate}\n")
-                        f.write(f"Channels: {frame.num_channels}\n")
-                        f.write(f"Samples per channel: {frame.samples_per_channel}\n")
-                    
-                    print(f"\n[FORMAT] {frame.sample_rate}Hz, {frame.num_channels}ch - saved to audio_format.txt\n")
                 
-                # if frame_count == 1:
-                #     print(f"\n[AUDIO FORMAT]")
-                #     print(f"  Sample rate: {frame.sample_rate} Hz")
-                #     print(f"  Channels: {frame.num_channels}")
-                #     print(f"  Samples per channel: {frame.samples_per_channel}")
-                #     print(f"  Data length: {len(frame.data.tobytes())} bytes\n")
-                    
-                    # Create stream with agent's actual format
                     stream = pa.open(
                         format=pyaudio.paInt16,
                         channels=frame.num_channels,
@@ -106,20 +52,44 @@ async def play_audio_track(track: rtc.RemoteAudioTrack):
                 if len(audio_bytes) > 0:
                     audio_array = np.frombuffer(audio_bytes, np.int16)
                     mean_square = np.mean(audio_array.astype(np.float64)**2)
-                    rms = int(np.sqrt(mean_square)) if mean_square >= 0 else 0
-                    print(f"[DEBUG] recv {len(audio_bytes)} B, agent RMS {rms}")
-                else:
-                    rms = 0
-                # rms = int(np.sqrt(np.mean(np.frombuffer(audio_bytes, np.int16)**2)))
-                # print(f"[DEBUG] agent RMS {rms}")  
+                    
+                    
+                    # rms = int(np.sqrt(mean_square)) if mean_square 0 else 0
+                    if not np.isnan(mean_square) and mean_square >= 0:
+                        rms = int(np.sqrt(mean_square))
+                        # Only print when agent is speaking loudly
+                        if rms > 100:
+                            print(f"[Agent speaking: RMS {rms}]", end=' ', flush=True)
+                    else:
+                        rms = 0
+                
+                # Detect when agent starts/stops speaking
+                    is_speaking = rms > latency_tracker.agent_silence_threshold
+                    
+                    if is_speaking:
+                        silence_frames = 0
+                        if not agent_was_speaking:
+                            # Agent started speaking
+                            latency_tracker.agent_started_responding()
+                            agent_was_speaking = True
+                    else:
+                        if agent_was_speaking:
+                            silence_frames += 1
+                            if silence_frames >= silence_threshold_frames:
+                                # Agent confirmed stopped speaking
+                                latency_tracker.agent_stopped_responding()
+                                agent_was_speaking = False
+                                silence_frames = 0
+                
                 await loop.run_in_executor(pool, stream.write, frame.data.tobytes())
         finally:
-            stream.stop_stream()
-            stream.close()
+            if stream:
+                stream.stop_stream()
+                stream.close()
             pa.terminate()
 
 async def publish_microphone(local: rtc.LocalParticipant):
-    # Ask the OS for an audio track
+    # Ask Windows for an audio track
     source = rtc.AudioSource(48000, 1)          # 48 kHz, mono
     track = rtc.LocalAudioTrack.create_audio_track("mic", source)
 
@@ -140,6 +110,11 @@ async def capture_microphone(source: rtc.AudioSource):
         rate=48000,
         input=True,
         frames_per_buffer=480)          # 10 ms @ 48 kHz
+    
+    user_was_speaking = False
+    silence_frames = 0
+    silence_threshold_frames = int(latency_tracker.silence_duration * 100)
+    
     try:
         while True:
             data = stream.read(480, exception_on_overflow=False)
@@ -147,9 +122,29 @@ async def capture_microphone(source: rtc.AudioSource):
             
             # Calculate RMS for visual feedback
             rms = int(np.sqrt(np.mean(np.abs(frame.astype(np.float64))**2)))
-            bar = "█" * min(50, rms // 10)
-            print(f"\r RMS {rms:4d}  {bar:<50}", end='', flush=True)
+            if rms > 50:
+                bar_length = min(30, rms // 100)
+                bar = "█" * bar_length
+                print(f"\r{bar:<30} {rms:4d}", end='', flush=True)
+                        
+            is_speaking = rms > latency_tracker.user_silence_threshold
             
+            if is_speaking:
+                silence_frames = 0
+                if not user_was_speaking:
+                    # User started speaking
+                    latency_tracker.user_started_speaking()
+                    user_was_speaking = True
+                
+            else:
+                if user_was_speaking:
+                    silence_frames += 1
+                if silence_frames >= silence_threshold_frames:
+                    # Confirmed end of speech
+                    latency_tracker.user_stopped_speaking()
+                    user_was_speaking = False
+                    silence_frames = 0
+
             await source.capture_frame(rtc.AudioFrame(
                 data=frame.tobytes(),
                 sample_rate=48000,
@@ -168,33 +163,33 @@ async def main() -> None:
     # Define event handlers
     @room.on("track_subscribed")
     def on_track_subscribed(track: rtc.Track, publication, participant):
-        print(f"\n🎵  Subscribed to {participant.identity}'s track")
+        print(f"\nSubscribed to {participant.identity}'s track")
         if track.kind == rtc.TrackKind.KIND_AUDIO:
-            print("🔊  Playing agent audio...")
+            print(f"Agent connected: {participant.identity}...")
             asyncio.create_task(play_audio_track(track))
 
     @room.on("participant_connected")
     def on_participant_connected(participant):
-        print(f"\n👋  {participant.identity} connected")
+        print(f"\n{participant.identity} connected")
 
     @room.on("participant_disconnected")
     def on_participant_disconnected(participant):
-        print(f"\n👋  {participant.identity} disconnected")
-
-    @room.on("data_received")
-    def on_data_received(payload: bytes, participant, kind):
-        print(f"\n📨  Got message: {payload.decode()}")
-
-    # Connect to the room
-    print("Connecting…")
+        print(f"\n{participant.identity} disconnected")
+        
+    print("Connecting to LiveKit...")
     await room.connect(WS_URL, USER_TOKEN)
-    print(f"✅  Connected to room: {ROOM_NAME}")
+    print(f"✅ Connected to: {ROOM_NAME}")
+    print(f"📍 Room SID: {await room.sid}") # SID = room's unique ID
+    print("\n" + "="*60)
+    print("🎙️  VOICE LATENCY TRACKER")
+    print("="*60)
+    print("Speak into your mic. Latency will be calculated.")
+    print("Press Ctrl+C to exit and see final statistics.\n")
+    
+    await publish_microphone(room.local_participant)
 
-    # SID = room's unique ID
-    print(f"    SID: {await room.sid}")
     all_ids = [room.local_participant.identity] + list(room.remote_participants.keys())
     print(f"Participants: {all_ids}")
-    print("\nSpeak into your microphone. Press Ctrl+C to exit.\n")
     
     await publish_microphone(room.local_participant)
     
@@ -202,8 +197,25 @@ async def main() -> None:
         await asyncio.Event().wait()  # Keep running until interrupted
     except KeyboardInterrupt:
         print("\nInterrupted. Leaving...")
+        print("\n\nFinal Latency Statistics:")
+        print("="*60)
+        stats = latency_tracker.get_stats()
+        if isinstance(stats, dict):
+            # print(f"  Total Conversations: {stats['total_turns']}")
+            print(f"  Average latency: {stats['average_ms']:.0f}ms")
+            print(f"  Min latency: {stats['min_ms']:.0f}ms")
+            print(f"  Max latency: {stats['max_ms']:.0f}ms")
+            print(f"  Measurements: {stats['count']}")
+        else:
+            print("  No meaningful latency measurements recorded.")
+            print(f"  {stats}")
+        print("="*60 + "\n")
     finally:
         await room.disconnect()
 
 if __name__ == "__main__":
     asyncio.run(main())
+    
+    
+    
+#The agents statements are incomplete, they stop abruptly and starts a new sentence. Fix it
