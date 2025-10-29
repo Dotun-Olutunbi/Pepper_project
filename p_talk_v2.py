@@ -8,9 +8,9 @@ import qi
 from latencytracker import LatencyTracker
 
 # Configuration
-PEPPER_IP = "169.254.166.117"  # Change this to your Pepper's IP
+PEPPER_IP = "169.254.84.236"  # Change this to your Pepper's IP
 PEPPER_PORT = 9559
-PEPPER_VOLUME = 65  # Volume level 0-100 (default: 80)
+PEPPER_VOLUME = 75  # Volume level 0-100 (default: 80)
 
 dotenv.load_dotenv(".env.livekit")
 USER_TOKEN = dotenv.get_key(".env.livekit", "USER_TOKEN")
@@ -194,6 +194,7 @@ async def main() -> None:
     
     # Setup LiveKit room
     room = rtc.Room()
+    agent_ready = asyncio.Event()
 
     @room.on("track_subscribed")
     def on_track_subscribed(track: rtc.Track, publication, participant):
@@ -214,6 +215,16 @@ async def main() -> None:
     await room.connect(WS_URL, USER_TOKEN)
     print(f"✅ Connected to: {ROOM_NAME}")
     print(f"🔒 Room SID: {await room.sid}")
+    
+    print("\n⏳ Waiting for agent to join...")
+    
+    # Wait up to 15 seconds for agent
+    try:
+        await asyncio.wait_for(agent_ready.wait(), timeout=15.0)
+        print("✅ Agent is ready!")
+    except asyncio.TimeoutError:
+        print("⚠️  Agent didn't join within 15s. Starting anyway...")
+        
     print("\n" + "="*60)
     print("🎙️  VOICE LATENCY TRACKER (Pepper Output)")
     print("="*60)
